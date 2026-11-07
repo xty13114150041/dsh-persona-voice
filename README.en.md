@@ -9,7 +9,7 @@ The working agent focuses on the task. After each turn, a second, context-carryi
 ## What you get
 
 - After a turn ends, the final answer shows "organizing words…" and switches to the persona version a few seconds later.
-- The original answer is moved into the reasoning block as "【执行原文】" (original output).
+- A "查看原文" (show original) button under the answer toggles between the persona version and the original; the original is also kept in the reasoning block as "【执行原文】".
 - Only each turn's final answer is rewritten. Tool calls, intermediate steps and subagents stay untouched.
 - The persona agent keeps its own multi-turn history: your messages, the working agent's raw output, and its own replies. It remembers the conversation and varies its phrasing.
 

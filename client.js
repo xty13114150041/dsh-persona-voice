@@ -65,11 +65,17 @@ window.__ModuleLoader__.load({
           && tail?.closing?.finalNode.seq === data.finalNode.seq
           && Array.isArray(data.blocks) && data.blocks.some(b => b.kind === 'text' && b.text.trim());
         const state = useVoice(sessionId, turn?.turn, isFinal && turn?.turn !== undefined);
+        const [showRaw, setShowRaw] = React.useState(false);
         const patched = React.useMemo(() => {
           if (!isFinal || !state || state.status === 'none') return node;
           return { ...node, data: { ...data, blocks: rewrite(data.blocks, state) } };
         }, [node, data, isFinal, state]);
-        return h(Original, { ...props, node: patched });
+        // 人设版生成成功后，在回答下方给一个切换按钮；原文仍交给官方组件渲染（Markdown 照常）。
+        if (!isFinal || state?.status !== 'ok') return h(Original, { ...props, node: patched });
+        return h(React.Fragment, null,
+          h(Original, { ...props, node: showRaw ? node : patched }),
+          h('div', { className: 'av-toggle' },
+            h('button', { type: 'button', onClick: () => setShowRaw(v => !v) }, showRaw ? '查看人设版' : '查看原文')));
       };
     }
 
@@ -89,6 +95,9 @@ window.__ModuleLoader__.load({
 .av-actions .av-primary{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-bg-base)}
 .av-actions button:disabled{opacity:.5;cursor:default}
 .av-error{color:var(--dsw-alias-state-error-primary)}.av-ok{color:var(--dsw-alias-state-success-primary)}
+.av-toggle{margin:4px 0 2px}
+.av-toggle button{font:inherit;font-size:12px;color:var(--dsw-alias-label-tertiary);background:transparent;border:0;border-radius:6px;padding:2px 6px;cursor:pointer}
+.av-toggle button:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary)}
 `;
 
     function SettingsPage() {
