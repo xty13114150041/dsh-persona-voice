@@ -136,17 +136,35 @@ window.__ModuleLoader__.load({
 .av-toggle button:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary)}
 `;
 
+    const CATALOG_KEY = 'dsh-persona-voice.catalog';
+    function readCachedCatalog() {
+      try { const value = JSON.parse(localStorage.getItem(CATALOG_KEY)); return Array.isArray(value?.groups) ? value : null; } catch { return null; }
+    }
+    const timeText = at => at ? new Date(at).toLocaleString() : '';
+
     // 官方模型目录（与输入框模型菜单、/model 同源），apply 时注入。
     let loadCatalog = async () => ({ groups: [], failures: [] });
 
     function SettingsPage() {
       const [data, setData] = React.useState(null);      // { settings, defaultRules, defaultReminder }
-      const [catalog, setCatalog] = React.useState(null); // { groups, failures } | { error }
-      React.useEffect(() => {
-        let alive = true;
-        loadCatalog().then(value => { if (alive) setCatalog(value); }, reason => { if (alive) setCatalog({ groups: [], failures: [], error: reason.message }); });
-        return () => { alive = false; };
+      // 模型目录读一次就缓存（localStorage），之后打开直接用；需要时点"刷新模型列表"。
+      const [catalog, setCatalog] = React.useState(readCachedCatalog); // { groups, failures, at } | { error } | null
+      const [refreshing, setRefreshing] = React.useState(false);
+      const refreshCatalog = React.useCallback(async () => {
+        setRefreshing(true);
+        try {
+          const value = await loadCatalog();
+          const stored = { groups: value.groups ?? [], failures: value.failures ?? [], at: Date.now() };
+          try { localStorage.setItem(CATALOG_KEY, JSON.stringify(stored)); } catch {}
+          setCatalog(stored);
+        } catch (reason) {
+          // 刷新失败时保留上次的列表，只提示错误。
+          setCatalog(c => ({ groups: c?.groups ?? [], failures: c?.failures ?? [], at: c?.at, error: reason.message }));
+        } finally {
+          setRefreshing(false);
+        }
       }, []);
+      React.useEffect(() => { if (catalog === null) refreshCatalog(); }, []);
       const [draft, setDraft] = React.useState(null);
       const [status, setStatus] = React.useState({ kind: 'idle' });
       const reload = React.useCallback(async () => {
@@ -173,7 +191,9 @@ window.__ModuleLoader__.load({
       const dirty = JSON.stringify(draft) !== JSON.stringify(data.settings);
       const routeValue = draft.provider ? draft.provider + '\n' + draft.model : '';
       const groups = catalog?.groups ?? [];
-      const known = groups.some(p => p.id === draft.provider && p.models.some(m => m.id === draft.model));
+      const selectedModel = groups.find(p => p.id === draft.provider)?.models.find(m => m.id === draft.model);
+      const known = selectedModel !== undefined;
+      const efforts = selectedModel?.reasoning?.efforts ?? [];
       async function save() {
         setStatus({ kind: 'saving' });
         try {
@@ -203,16 +223,29 @@ window.__ModuleLoader__.load({
           h('label', null, '转述用的模型'),
           h('select', {
             value: routeValue,
-            onChange: e => { const [provider = '', model = ''] = e.target.value.split('\n'); setDraft(d => ({ ...d, provider, model })); setStatus({ kind: 'idle' }); },
+            onChange: e => { const [provider = '', model = ''] = e.target.value.split('\n'); setDraft(d => ({ ...d, provider, model, effort: '' })); setStatus({ kind: 'idle' }); },
           },
             h('option', { value: '' }, '跟随当前会话的模型'),
             catalog && !known && draft.provider && h('option', { value: routeValue }, `${draft.provider} / ${draft.model}（当前不可用）`),
             groups.map(p => h('optgroup', { key: p.id, label: p.name },
               p.models.map(m => h('option', { key: m.id, value: p.id + '\n' + m.id }, m.name === m.id ? m.id : `${m.name}（${m.id}）`))))),
+          h('div', { className: 'av-actions' },
+            h('button', { type: 'button', disabled: refreshing, onClick: refreshCatalog }, refreshing ? '刷新中…' : '刷新模型列表'),
+            h('span', { className: 'av-hint' }, catalog?.at ? '列表更新于 ' + timeText(catalog.at) : '')),
           h('div', { className: 'av-hint' }, catalog === null ? '正在读取模型目录…'
-            : catalog.error ? '读取模型目录失败：' + catalog.error
-            : '列表与输入框的模型菜单一致。推荐选一个便宜、快的模型；会自动使用该模型最低的思考强度。'),
+            : catalog.error ? '读取模型目录失败：' + catalog.error + (catalog.groups.length ? '（显示的是上次的列表）' : '')
+            : '列表与输入框的模型菜单一致，读取一次后会记住；在官方设置里增删模型后点"刷新模型列表"。推荐选一个便宜、快的模型。'),
           catalog?.failures?.length > 0 && h('div', { className: 'av-hint' }, '暂时不可用：' + catalog.failures.map(f => f.name).join('、'))),
+
+        h('div', { className: 'av-field' },
+          h('label', null, '思考强度'),
+          h('select', { value: draft.effort, disabled: !draft.provider || efforts.length === 0, onChange: e => set('effort', e.target.value) },
+            h('option', { value: '' }, '自动（最省：能关就关，否则最低档）'),
+            draft.effort && !efforts.some(e => e.id === draft.effort) && h('option', { value: draft.effort }, `${draft.effort}（该模型不支持）`),
+            efforts.map(e => h('option', { key: e.id, value: e.id }, e.name && e.name !== e.id ? `${e.name}（${e.id}）` : e.id))),
+          h('div', { className: 'av-hint' }, !draft.provider ? '跟随会话模型时自动选择；指定模型后可手动设置。'
+            : efforts.length === 0 ? '这个模型没有可调的思考强度。'
+            : '转述一般不需要深度思考；调高会更慢、更贵。')),
 
         h('div', { className: 'av-field' },
           h('label', null, '人设文件（可选）'),

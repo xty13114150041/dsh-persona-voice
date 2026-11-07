@@ -8,6 +8,8 @@ test('defaults are disabled and follow the session model', () => {
   assert.equal(s.provider, '');
   assert.equal(s.model, '');
   assert.equal(s.maxTokens, DEFAULT_SETTINGS.maxTokens);
+  assert.equal(s.effort, '');
+  assert.equal(normalizeSettings({ effort: ' high ' }).effort, 'high');
 });
 
 test('provider and model must be set together', () => {

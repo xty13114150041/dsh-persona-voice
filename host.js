@@ -14,6 +14,7 @@ export const DEFAULT_SETTINGS = {
   enabled: false,
   provider: '',        // provider 与 model 都留空：沿用该会话 A 正在用的模型
   model: '',
+  effort: '',          // 思考强度：留空=自动（有 off 用 off，否则最低档）
   personaFile: '',     // 填了就从文件读人设（优先），否则用 persona 文本
   persona: '',
   rules: DEFAULT_RULES,
@@ -35,6 +36,7 @@ export function normalizeSettings(input) {
     persona: String(s.persona ?? ''),
     rules: String(s.rules ?? ''),
     reminder: String(s.reminder ?? ''),
+    effort: String(s.effort ?? '').trim(),
   };
   if (Boolean(out.provider) !== Boolean(out.model)) throw new Error('provider 和 model 要么都填，要么都留空');
   for (const [key, [min, max]] of Object.entries(INT_LIMITS)) {
@@ -85,13 +87,15 @@ export async function apply(ctx, config = {}) {
     fs.appendFile(path.join(DATA_DIR, 'debug.log'), `${new Date().toISOString()} ${line}\n`).catch(() => {});
   }
 
-  // 选最省的推理强度：有 off 用 off；模型不支持推理强度就不传；否则用第一档（通常最低）。
-  async function pickEffort(providerId, modelId) {
+  // 推理强度：设置了且该模型支持就用设置值；否则自动选最省的（有 off 用 off，没有就第一档）；模型不支持推理强度则不传。
+  async function pickEffort(providerId, modelId, wanted = '') {
     try {
       // 与官方模型目录相同的来源：resolveModelInfo 给出该模型的推理强度。
       const info = await withTimeout(ctx.llm.resolveModelInfo(providerId, modelId), 5000, `resolveModelInfo(${providerId}/${modelId}) timed out`);
       const efforts = info?.reasoning?.efforts?.map(e => e.id);
       if (!efforts?.length) return undefined;
+      if (wanted && efforts.includes(wanted)) return wanted;
+      if (wanted) debug(`effort "${wanted}" not supported by ${providerId}/${modelId}; using auto`);
       return efforts.includes('off') ? 'off' : efforts[0];
     } catch (error) {
       debug(`resolveModelInfo failed: ${error?.message ?? error}`);
@@ -125,7 +129,7 @@ export async function apply(ctx, config = {}) {
       maxTurns: settings.maxTurns,
     });
 
-    const reasoningEffort = await pickEffort(route.provider, route.model);
+    const reasoningEffort = await pickEffort(route.provider, route.model, settings.effort);
     debug(`turn ${key} route=${route.provider}/${route.model} effort=${reasoningEffort ?? '(none)'}`);
     const call = await ctx.llm.prepareCall({
       provider: route.provider, model: route.model, maxTokens: settings.maxTokens,

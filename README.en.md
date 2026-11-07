@@ -36,7 +36,8 @@ Open **Settings → 人设转述 (Persona voice)**. Changes apply from the next 
 You can set:
 
 - an on/off switch (off by default)
-- the model to use (defaults to the session's model, run at its lowest reasoning effort)
+- the model to use (defaults to the session's model; same list as the composer picker)
+- the reasoning effort (auto = off or the lowest level by default)
 - an optional persona file, re-read every turn; if it contains a `<xxx_persona>…</xxx_persona>` block, only that block is used
 - the persona text, used when no file is set
 - the relay rules
