@@ -9,7 +9,7 @@ The working agent focuses on the task. After each turn, a second, context-carryi
 ## What you get
 
 - When enabled, the working agent's answer is folded into the process chain right away (no flash of the original); the process shows "正在组织语言…" (organizing words) and the persona version appears a few seconds later.
-- The persona agent's history is append-only with the persona fixed in the system prompt, trimmed in large batches, so most turns reuse the same cached prefix. A short per-turn reminder is attached to the latest message only. Actual token usage (including cache hits) is logged to `debug.log`.
+- The persona agent's history is append-only with the persona fixed in the system prompt, trimmed in large batches, so most turns reuse the same cached prefix. A short fixed reminder is appended to every user message (kept identical so cached prefixes stay valid). Actual token usage (including cache hits) is logged to `debug.log`.
 - A "查看原文" (show original) button under the answer toggles between the persona version and the original; the original is also kept in the reasoning block as "【执行原文】".
 - Only each turn's final answer is rewritten. Tool calls, intermediate steps and subagents stay untouched.
 - The persona agent keeps its own multi-turn history: your messages, the working agent's raw output, and its own replies. It remembers the conversation and varies its phrasing.

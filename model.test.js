@@ -35,10 +35,11 @@ test('trims in batches so the prefix stays stable between batches', () => {
   assert.match(a.messages[0].content, /u5/);
 });
 
-test('reminder only goes into the current message', () => {
-  const { messages } = buildRequest({ persona: 'p', history: mk(2), current: { user: 'c', raw: 'r' }, reminder: '保持口吻' });
-  assert.match(messages.at(-1).content, /<reminder>保持口吻<\/reminder>/);
-  assert.doesNotMatch(messages[0].content, /reminder/);
+test('reminder is attached identically to every user message so the previous request stays a prefix', () => {
+  const a = buildRequest({ persona: 'p', history: mk(2), current: { user: 'u2', raw: 'RAW2' }, reminder: '保持口吻' });
+  const b = buildRequest({ persona: 'p', history: mk(3), current: { user: 'c', raw: 'r' }, reminder: '保持口吻' });
+  assert.match(a.messages.at(-1).content, /<reminder>保持口吻<\/reminder>/);
+  assert.deepEqual(b.messages.slice(0, a.messages.length), a.messages);
 });
 
 test('clips very long raw output keeping head and tail', () => {

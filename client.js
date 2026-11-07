@@ -219,7 +219,7 @@ window.__ModuleLoader__.load({
         h('div', { className: 'av-field' },
           h('label', null, '每轮提醒'),
           h('input', { type: 'text', value: draft.reminder, placeholder: '留空则不附加', onChange: e => set('reminder', e.target.value) }),
-          h('div', { className: 'av-hint' }, '附在本轮最后一条消息里、不写进历史的一句话，防止聊久了人设走样，不影响缓存。'),
+          h('div', { className: 'av-hint' }, '附在每条用户消息末尾的一句固定提醒，防止聊久了人设走样；文本固定，不影响缓存（修改后会有一轮缓存失效）。'),
           h('div', { className: 'av-actions' }, h('button', { type: 'button', onClick: () => set('reminder', data.defaultReminder) }, '恢复默认提醒'))),
 
         h('div', { className: 'av-row' },

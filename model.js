@@ -2,7 +2,8 @@
 //
 // 缓存友好：system（人设 + 规则）固定在最前；历史只往后追加、每轮原文完整保留；
 // 超过 maxTurns 时成批删掉最早的一半，所以大多数轮次的前缀与上一轮完全相同。
-// 简短提醒只附在本轮最后一条消息里，不写进历史，不会破坏前缀。
+// 简短提醒附在每条用户消息末尾（固定文本），这样已发送过的消息永远不变：
+// Anthropic 的缓存断点在上一轮最后一条消息上，若历史消息与上一轮不同就整段失效。
 
 export const DEFAULT_RULES = `每一轮你会收到用户说的话（<user>），以及执行助手（另一个负责干活的同事）这一轮的原始输出（<executor_output>）。
 请用你自己的口吻，把执行结果转述给用户。规则：
@@ -34,13 +35,12 @@ export function buildRequest({ persona, rules = DEFAULT_RULES, reminder = '', hi
   const system = `${persona.trim()}\n\n<relay_rules>\n${rules.trim()}\n</relay_rules>`;
   const kept = history.slice(trimStart(history.length, maxTurns));
   const messages = [];
+  const tag = reminder.trim() ? `\n<reminder>${reminder.trim()}</reminder>` : '';
   for (const turn of kept) {
-    messages.push({ role: 'user', content: formatTurn(turn.user, turn.raw, maxRawChars) });
+    messages.push({ role: 'user', content: formatTurn(turn.user, turn.raw, maxRawChars) + tag });
     messages.push({ role: 'assistant', content: turn.voice });
   }
-  let last = formatTurn(current.user, current.raw, maxRawChars);
-  if (reminder.trim()) last += `\n<reminder>${reminder.trim()}</reminder>`;
-  messages.push({ role: 'user', content: last });
+  messages.push({ role: 'user', content: formatTurn(current.user, current.raw, maxRawChars) + tag });
   return { system, messages };
 }
 

@@ -17,7 +17,7 @@ export const DEFAULT_SETTINGS = {
   personaFile: '',     // 填了就从文件读人设（优先），否则用 persona 文本
   persona: '',
   rules: DEFAULT_RULES,
-  reminder: DEFAULT_REMINDER,  // 每轮附在最后一条消息里的简短提醒，不进历史
+  reminder: DEFAULT_REMINDER,  // 附在每条用户消息末尾的固定提醒
   maxTokens: 2048,
   maxTurns: 40,
 };
@@ -88,7 +88,7 @@ export async function apply(ctx, config = {}) {
   // 选最省的推理强度：有 off 用 off；模型不支持推理强度就不传；否则用第一档（通常最低）。
   async function pickEffort(providerId, modelId) {
     try {
-      const models = await ctx.llm.listModels(providerId);
+      const models = await withTimeout(ctx.llm.listModels(providerId), 5000, `listModels(${providerId}) timed out`);
       const info = models.find(m => m.id === modelId);
       const efforts = info?.reasoning?.efforts?.map(e => e.id);
       if (!efforts?.length) return undefined;
@@ -97,6 +97,12 @@ export async function apply(ctx, config = {}) {
       debug(`listModels failed: ${error?.message ?? error}`);
       return undefined;
     }
+  }
+
+  function withTimeout(promise, ms, message) {
+    let timer;
+    return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms); })])
+      .finally(() => clearTimeout(timer));
   }
 
   function textOf(message) {
@@ -215,7 +221,7 @@ export async function apply(ctx, config = {}) {
         }
         const providers = (await Promise.all(ctx.llm.listProviders().map(async p => {
           try {
-            const models = await ctx.llm.listModels(p.id);
+            const models = await withTimeout(ctx.llm.listModels(p.id), 5000, `listModels(${p.id}) timed out`);
             return { id: p.id, name: p.name ?? p.id, models: models.map(m => ({ id: m.id, name: m.name ?? m.id })) };
           } catch (error) {
             debug(`listModels(${p.id}) failed: ${error?.message ?? error}`);
