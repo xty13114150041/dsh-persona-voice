@@ -166,7 +166,12 @@ window.__ModuleLoader__.load({
       }, []);
       React.useEffect(() => { if (catalog === null) refreshCatalog(); }, []);
       const [draft, setDraft] = React.useState(null);
+      const [sel, setSel] = React.useState(0);           // 正在编辑的预设下标
       const [status, setStatus] = React.useState({ kind: 'idle' });
+      const resetDraft = settings => {
+        setDraft(settings);
+        setSel(Math.max(0, settings.presets.findIndex(p => p.name === settings.activePreset)));
+      };
       const reload = React.useCallback(async () => {
         setStatus({ kind: 'loading' });
         try {
@@ -174,7 +179,7 @@ window.__ModuleLoader__.load({
           const result = await response.json();
           if (!response.ok) throw new Error(result.error || response.statusText);
           setData(result);
-          setDraft(result.settings);
+          resetDraft(result.settings);
           setStatus({ kind: 'idle' });
         } catch (reason) {
           setStatus({ kind: 'error', message: reason.message });
@@ -194,6 +199,30 @@ window.__ModuleLoader__.load({
       const selectedModel = groups.find(p => p.id === draft.provider)?.models.find(m => m.id === draft.model);
       const known = selectedModel !== undefined;
       const efforts = selectedModel?.reasoning?.efforts ?? [];
+      // 正在编辑（也是正在使用）的预设；按下标跟踪，改名时不会跟丢。
+      const preset = draft.presets[sel] ?? draft.presets[0];
+      const updatePreset = patch => {
+        setDraft(d => {
+          const presets = d.presets.map((p, i) => i === sel ? { ...p, ...patch } : p);
+          return { ...d, presets, activePreset: presets[sel].name };
+        });
+        setStatus({ kind: 'idle' });
+      };
+      const addPreset = () => {
+        let n = draft.presets.length + 1;
+        while (draft.presets.some(p => p.name === '人设 ' + n)) n++;
+        const name = '人设 ' + n;
+        setDraft(d => ({ ...d, presets: [...d.presets, { name, personaFile: '', persona: '' }], activePreset: name }));
+        setSel(draft.presets.length);
+        setStatus({ kind: 'idle' });
+      };
+      const removePreset = () => {
+        if (!window.confirm(`删除预设「${preset.name}」？`)) return;
+        const presets = draft.presets.filter((_, i) => i !== sel);
+        setDraft(d => ({ ...d, presets, activePreset: presets[0].name }));
+        setSel(0);
+        setStatus({ kind: 'idle' });
+      };
       async function save() {
         setStatus({ kind: 'saving' });
         try {
@@ -201,7 +230,7 @@ window.__ModuleLoader__.load({
           const result = await response.json();
           if (!response.ok) throw new Error(result.error || response.statusText);
           setData(d => ({ ...d, settings: result.settings }));
-          setDraft(result.settings);
+          resetDraft(result.settings);
           setStatus({ kind: 'saved' });
           refreshEnabled();
         } catch (reason) {
@@ -248,14 +277,27 @@ window.__ModuleLoader__.load({
             : '转述一般不需要深度思考；调高会更慢、更贵。')),
 
         h('div', { className: 'av-field' },
+          h('label', null, '人设预设'),
+          h('div', { className: 'av-actions' },
+            h('select', { value: sel, style: { flex: 1 }, onChange: e => { const i = Number(e.target.value); setSel(i); set('activePreset', draft.presets[i].name); } },
+              draft.presets.map((p, i) => h('option', { key: i, value: i }, p.name || '（未命名）'))),
+            h('button', { type: 'button', onClick: addPreset }, '新建'),
+            h('button', { type: 'button', disabled: draft.presets.length < 2, onClick: removePreset }, '删除')),
+          h('div', { className: 'av-hint' }, '下拉框选中的预设就是正在使用的人设，保存后下一轮生效。切换人设后，前几轮可能还带着上一个人设的说话习惯。')),
+
+        h('div', { className: 'av-field' },
+          h('label', null, '预设名称'),
+          h('input', { type: 'text', value: preset.name, onChange: e => updatePreset({ name: e.target.value }) })),
+
+        h('div', { className: 'av-field' },
           h('label', null, '人设文件（可选）'),
-          h('input', { type: 'text', value: draft.personaFile, placeholder: '/path/to/AGENTS.md', onChange: e => set('personaFile', e.target.value) }),
+          h('input', { type: 'text', value: preset.personaFile, placeholder: '/path/to/AGENTS.md', onChange: e => updatePreset({ personaFile: e.target.value }) }),
           h('div', { className: 'av-hint' }, '填写后优先从这个文件读取人设，每轮重新读取，改文件即生效。文件里有 <xxx_persona>…</xxx_persona> 块时只取这一块。')),
 
         h('div', { className: 'av-field' },
           h('label', null, '人设提示词'),
-          h('textarea', { value: draft.persona, disabled: Boolean(draft.personaFile), placeholder: '你是……（描述角色的性格、说话方式、称呼等）', onChange: e => set('persona', e.target.value) }),
-          draft.personaFile && h('div', { className: 'av-hint' }, '已填写人设文件，这里的文本不会被使用。')),
+          h('textarea', { value: preset.persona, disabled: Boolean(preset.personaFile), placeholder: '你是……（描述角色的性格、说话方式、称呼等）', onChange: e => updatePreset({ persona: e.target.value }) }),
+          preset.personaFile && h('div', { className: 'av-hint' }, '已填写人设文件，这里的文本不会被使用。')),
 
         h('div', { className: 'av-field' },
           h('label', null, '转述规则'),
@@ -274,7 +316,7 @@ window.__ModuleLoader__.load({
 
         h('div', { className: 'av-actions' },
           h('button', { type: 'button', className: 'av-primary', disabled: !dirty || status.kind === 'saving', onClick: save }, status.kind === 'saving' ? '保存中…' : '保存'),
-          h('button', { type: 'button', disabled: !dirty || status.kind === 'saving', onClick: () => { setDraft(data.settings); setStatus({ kind: 'idle' }); } }, '放弃修改'),
+          h('button', { type: 'button', disabled: !dirty || status.kind === 'saving', onClick: () => { resetDraft(data.settings); setStatus({ kind: 'idle' }); } }, '放弃修改'),
           status.kind === 'saved' && h('span', { className: 'av-ok' }, '已保存，下一轮生效'),
           status.kind === 'error' && h('span', { className: 'av-error' }, status.message)));
     }

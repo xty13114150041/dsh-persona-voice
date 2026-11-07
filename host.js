@@ -15,8 +15,9 @@ export const DEFAULT_SETTINGS = {
   provider: '',        // provider 与 model 都留空：沿用该会话 A 正在用的模型
   model: '',
   effort: '',          // 思考强度：留空=自动（有 off 用 off，否则最低档）
-  personaFile: '',     // 填了就从文件读人设（优先），否则用 persona 文本
-  persona: '',
+  // 人设预设：每个预设可填文件路径（优先）或直接粘贴提示词；activePreset 是当前使用的预设名。
+  presets: [{ name: '默认', personaFile: '', persona: '' }],
+  activePreset: '默认',
   rules: DEFAULT_RULES,
   reminder: DEFAULT_REMINDER,  // 附在每条用户消息末尾的固定提醒
   maxTokens: 2048,
@@ -32,17 +33,37 @@ export function normalizeSettings(input) {
     enabled: Boolean(s.enabled),
     provider: String(s.provider ?? '').trim(),
     model: String(s.model ?? '').trim(),
-    personaFile: String(s.personaFile ?? '').trim(),
-    persona: String(s.persona ?? ''),
+    presets: normalizePresets(input?.presets, s),
     rules: String(s.rules ?? ''),
     reminder: String(s.reminder ?? ''),
     effort: String(s.effort ?? '').trim(),
   };
+  const active = String(s.activePreset ?? '').trim();
+  out.activePreset = out.presets.some(p => p.name === active) ? active : out.presets[0].name;
   if (Boolean(out.provider) !== Boolean(out.model)) throw new Error('provider 和 model 要么都填，要么都留空');
   for (const [key, [min, max]] of Object.entries(INT_LIMITS)) {
     const value = Number(s[key]);
     if (!Number.isInteger(value) || value < min || value > max) throw new Error(`${key} 需要是 ${min}–${max} 之间的整数`);
     out[key] = value;
+  }
+  return out;
+}
+
+/** 规整人设预设；旧版设置（顶层 personaFile/persona）迁移成一个"默认"预设。 */
+function normalizePresets(presets, legacy) {
+  if (!Array.isArray(presets) || presets.length === 0) {
+    return [{ name: '默认', personaFile: String(legacy.personaFile ?? '').trim(), persona: String(legacy.persona ?? '') }];
+  }
+  const out = presets.map(p => ({
+    name: String(p?.name ?? '').trim(),
+    personaFile: String(p?.personaFile ?? '').trim(),
+    persona: String(p?.persona ?? ''),
+  }));
+  const names = new Set();
+  for (const p of out) {
+    if (!p.name) throw new Error('预设名称不能为空');
+    if (names.has(p.name)) throw new Error(`预设名称重复：${p.name}`);
+    names.add(p.name);
   }
   return out;
 }
@@ -78,8 +99,9 @@ export async function apply(ctx, config = {}) {
   }
 
   async function loadPersona(settings) {
-    if (settings.personaFile) return extractPersona(await fs.readFile(settings.personaFile, 'utf8'));
-    return settings.persona;
+    const preset = settings.presets.find(p => p.name === settings.activePreset);
+    if (preset.personaFile) return extractPersona(await fs.readFile(preset.personaFile, 'utf8'));
+    return preset.persona;
   }
 
   // 调试日志：~/.dsh/persona-voice/debug.log

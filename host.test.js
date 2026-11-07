@@ -23,6 +23,20 @@ test('integer fields are range checked', () => {
   assert.equal(normalizeSettings({ maxTokens: '4096' }).maxTokens, 4096);
 });
 
+test('legacy persona settings become a single default preset', () => {
+  const s = normalizeSettings({ personaFile: ' /a.md ', persona: 'x' });
+  assert.deepEqual(s.presets, [{ name: '默认', personaFile: '/a.md', persona: 'x' }]);
+  assert.equal(s.activePreset, '默认');
+});
+
+test('presets: names must be unique and non-empty; unknown active falls back to first', () => {
+  const presets = [{ name: 'A', persona: 'a' }, { name: 'B', personaFile: '/b.md' }];
+  assert.equal(normalizeSettings({ presets, activePreset: 'B' }).activePreset, 'B');
+  assert.equal(normalizeSettings({ presets, activePreset: 'Z' }).activePreset, 'A');
+  assert.throws(() => normalizeSettings({ presets: [{ name: 'A' }, { name: 'A' }] }), /重复/);
+  assert.throws(() => normalizeSettings({ presets: [{ name: ' ' }] }), /不能为空/);
+});
+
 test('extractPersona keeps only a *_persona block when present', () => {
   const file = '# rules\n<aerith_persona>\nhi\n</aerith_persona>\nmore';
   assert.equal(extractPersona(file), '<aerith_persona>\nhi\n</aerith_persona>');

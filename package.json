@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-persona-voice",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "description": "Persona relay for DSH: a second, context-carrying model call rewrites each turn's final answer in your character's voice",
   "license": "MIT",
