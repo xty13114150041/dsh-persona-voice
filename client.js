@@ -254,13 +254,17 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['slots', 'remote.session'],
+      inject: ['slots'],
       apply(ctx) {
-        loadCatalog = async () => {
-          const response = await ctx.remote.session.modelCatalog();
-          if (!response.ok) throw new Error(`${response.error.code}: ${response.error.message}`);
-          return response.value;
-        };
+        // 同官方插件的写法：在声明了 remote.session 的子上下文里访问 ctx.remote。
+        ctx.inject(['remote.session'], inner => {
+          loadCatalog = async () => {
+            const response = await inner.remote.session.modelCatalog();
+            if (!response.ok) throw new Error(`${response.error.code}: ${response.error.message}`);
+            return response.value;
+          };
+          inner.effect(() => () => { loadCatalog = async () => { throw new Error('模型目录服务不可用'); }; });
+        });
         refreshEnabled();
         const onFocus = () => refreshEnabled();
         window.addEventListener('focus', onFocus);
