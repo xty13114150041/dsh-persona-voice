@@ -136,8 +136,17 @@ window.__ModuleLoader__.load({
 .av-toggle button:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary)}
 `;
 
+    // 官方模型目录（与输入框模型菜单、/model 同源），apply 时注入。
+    let loadCatalog = async () => ({ groups: [], failures: [] });
+
     function SettingsPage() {
-      const [data, setData] = React.useState(null);      // { settings, providers, defaultRules }
+      const [data, setData] = React.useState(null);      // { settings, defaultRules, defaultReminder }
+      const [catalog, setCatalog] = React.useState(null); // { groups, failures } | { error }
+      React.useEffect(() => {
+        let alive = true;
+        loadCatalog().then(value => { if (alive) setCatalog(value); }, reason => { if (alive) setCatalog({ groups: [], failures: [], error: reason.message }); });
+        return () => { alive = false; };
+      }, []);
       const [draft, setDraft] = React.useState(null);
       const [status, setStatus] = React.useState({ kind: 'idle' });
       const reload = React.useCallback(async () => {
@@ -163,7 +172,8 @@ window.__ModuleLoader__.load({
       const set = (key, value) => { setDraft(d => ({ ...d, [key]: value })); setStatus({ kind: 'idle' }); };
       const dirty = JSON.stringify(draft) !== JSON.stringify(data.settings);
       const routeValue = draft.provider ? draft.provider + '\n' + draft.model : '';
-      const known = data.providers.some(p => p.id === draft.provider && p.models.some(m => m.id === draft.model));
+      const groups = catalog?.groups ?? [];
+      const known = groups.some(p => p.id === draft.provider && p.models.some(m => m.id === draft.model));
       async function save() {
         setStatus({ kind: 'saving' });
         try {
@@ -196,10 +206,13 @@ window.__ModuleLoader__.load({
             onChange: e => { const [provider = '', model = ''] = e.target.value.split('\n'); setDraft(d => ({ ...d, provider, model })); setStatus({ kind: 'idle' }); },
           },
             h('option', { value: '' }, '跟随当前会话的模型'),
-            !known && draft.provider && h('option', { value: routeValue }, `${draft.provider} / ${draft.model}（当前不可用）`),
-            data.providers.map(p => h('optgroup', { key: p.id, label: p.name },
+            catalog && !known && draft.provider && h('option', { value: routeValue }, `${draft.provider} / ${draft.model}（当前不可用）`),
+            groups.map(p => h('optgroup', { key: p.id, label: p.name },
               p.models.map(m => h('option', { key: m.id, value: p.id + '\n' + m.id }, m.name === m.id ? m.id : `${m.name}（${m.id}）`))))),
-          h('div', { className: 'av-hint' }, '推荐选一个便宜、快的模型；会自动使用该模型最低的思考强度。')),
+          h('div', { className: 'av-hint' }, catalog === null ? '正在读取模型目录…'
+            : catalog.error ? '读取模型目录失败：' + catalog.error
+            : '列表与输入框的模型菜单一致。推荐选一个便宜、快的模型；会自动使用该模型最低的思考强度。'),
+          catalog?.failures?.length > 0 && h('div', { className: 'av-hint' }, '暂时不可用：' + catalog.failures.map(f => f.name).join('、'))),
 
         h('div', { className: 'av-field' },
           h('label', null, '人设文件（可选）'),
@@ -241,8 +254,13 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['slots'],
+      inject: ['slots', 'remote.session'],
       apply(ctx) {
+        loadCatalog = async () => {
+          const response = await ctx.remote.session.modelCatalog();
+          if (!response.ok) throw new Error(`${response.error.code}: ${response.error.message}`);
+          return response.value;
+        };
         refreshEnabled();
         const onFocus = () => refreshEnabled();
         window.addEventListener('focus', onFocus);

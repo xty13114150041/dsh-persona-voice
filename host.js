@@ -88,13 +88,13 @@ export async function apply(ctx, config = {}) {
   // 选最省的推理强度：有 off 用 off；模型不支持推理强度就不传；否则用第一档（通常最低）。
   async function pickEffort(providerId, modelId) {
     try {
-      const models = await withTimeout(ctx.llm.listModels(providerId), 5000, `listModels(${providerId}) timed out`);
-      const info = models.find(m => m.id === modelId);
+      // 与官方模型目录相同的来源：resolveModelInfo 给出该模型的推理强度。
+      const info = await withTimeout(ctx.llm.resolveModelInfo(providerId, modelId), 5000, `resolveModelInfo(${providerId}/${modelId}) timed out`);
       const efforts = info?.reasoning?.efforts?.map(e => e.id);
       if (!efforts?.length) return undefined;
       return efforts.includes('off') ? 'off' : efforts[0];
     } catch (error) {
-      debug(`listModels failed: ${error?.message ?? error}`);
+      debug(`resolveModelInfo failed: ${error?.message ?? error}`);
       return undefined;
     }
   }
@@ -219,16 +219,8 @@ export async function apply(ctx, config = {}) {
           await writeJson(SETTINGS_FILE, settings);
           return Response.json({ settings }, { headers });
         }
-        const providers = (await Promise.all(ctx.llm.listProviders().map(async p => {
-          try {
-            const models = await withTimeout(ctx.llm.listModels(p.id), 5000, `listModels(${p.id}) timed out`);
-            return { id: p.id, name: p.name ?? p.id, models: models.map(m => ({ id: m.id, name: m.name ?? m.id })) };
-          } catch (error) {
-            debug(`listModels(${p.id}) failed: ${error?.message ?? error}`);
-            return null;
-          }
-        }))).filter(Boolean);
-        return Response.json({ settings: await readSettings(), providers, defaultRules: DEFAULT_RULES, defaultReminder: DEFAULT_REMINDER }, { headers });
+        // 模型列表由浏览器端直接读官方目录（session.modelCatalog），这里不再列举。
+        return Response.json({ settings: await readSettings(), defaultRules: DEFAULT_RULES, defaultReminder: DEFAULT_REMINDER }, { headers });
       } catch (error) {
         return Response.json({ error: error.message }, { status: 400, headers });
       }
