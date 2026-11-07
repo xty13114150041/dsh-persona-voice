@@ -256,8 +256,8 @@ window.__ModuleLoader__.load({
     return {
       inject: ['slots'],
       apply(ctx) {
-        // 同官方插件的写法：在声明了 remote.session 的子上下文里访问 ctx.remote。
-        ctx.inject(['remote.session'], inner => {
+        // 同官方 model-selection 插件：同时声明 remote 和 remote.session，才能访问 ctx.remote.session。
+        ctx.inject(['remote', 'remote.session'], inner => {
           loadCatalog = async () => {
             const response = await inner.remote.session.modelCatalog();
             if (!response.ok) throw new Error(`${response.error.code}: ${response.error.message}`);
