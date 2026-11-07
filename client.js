@@ -1,4 +1,5 @@
-// 浏览器端：把每轮"最终回答"的正文换成人设版，A 的原文折叠进思考过程。
+// 浏览器端：把每轮"最终回答"的正文换成人设版，A 的原文折叠进思考过程（过程链里的一行）；
+// 运行中的候选回答也先折叠，生成期间在过程里显示"正在组织语言…"，完成后给出"查看原文"切换。
 // 做法同 dsh-session-tags：找到官方 assistant-step 条目，原地替换其 component，
 // 改写 node.data.blocks 后交还给官方组件渲染（Markdown、文件链接等保持官方效果）。
 window.__ModuleLoader__.load({
@@ -7,7 +8,6 @@ window.__ModuleLoader__.load({
     const React = require('react');
     const h = React.createElement;
     const SLOT = 'conversation.chat.node';
-    const PENDING_TEXT = '*正在组织语言…*';
 
     // 只缓存终态结果；pending 每次重新查。
     const cache = new Map();
@@ -44,38 +44,71 @@ window.__ModuleLoader__.load({
       return active ? state : null;
     }
 
-    function rewrite(blocks, state) {
-      const raw = blocks.filter(b => b.kind === 'text').map(b => b.text).join('\n');
+    // 是否启用：启用时运行中的回答也先折叠，避免"先显示原文再消失"。
+    const enabledStore = { value: false, listeners: new Set() };
+    async function refreshEnabled() {
+      try {
+        const response = await fetch('/api/local-persona-voice/status', { headers: { 'cache-control': 'no-store' } });
+        const result = await response.json();
+        if (response.ok && result.enabled !== enabledStore.value) {
+          enabledStore.value = result.enabled;
+          for (const fn of enabledStore.listeners) fn();
+        }
+      } catch {}
+    }
+    const useEnabled = () => React.useSyncExternalStore(
+      fn => { enabledStore.listeners.add(fn); return () => enabledStore.listeners.delete(fn); },
+      () => enabledStore.value);
+
+    const textOf = blocks => blocks.filter(b => b.kind === 'text').map(b => b.text).join('\n');
+    // 把正文移进思考过程（像过程链里的一行），保留其余块。
+    function foldOriginal(blocks) {
       const others = blocks.filter(b => b.kind !== 'text');
-      const original = { kind: 'reasoning', text: '【执行原文】\n\n' + raw };
-      if (state.status === 'pending') return [...others, original, { kind: 'text', text: PENDING_TEXT }];
-      if (state.status === 'ok') return [...others, original, { kind: 'text', text: state.voice }];
-      if (state.status === 'error') return [...blocks, { kind: 'text', text: '\n> 人设版生成失败：' + state.error }];
-      return blocks;
+      return [...others, { kind: 'reasoning', text: '【执行原文】\n\n' + textOf(blocks) }];
     }
 
     function wrap(Original) {
       return function PersonaAssistantNodeView(props) {
         const { node, useTurnData, sessionId } = props;
         const data = node.data;
+        const enabled = useEnabled();
         const turn = node.location?.kind === 'turn' || node.location?.kind === 'step' ? node.location.turn : undefined;
         const tail = useTurnData('turn-tail');
+        const blocks = Array.isArray(data?.blocks) ? data.blocks : [];
+        const hasText = blocks.some(b => b.kind === 'text' && b.text.trim());
+        const closed = turn?.status === 'closed';
         // 与官方 AssistantNodeView 相同的"本轮最终回答"判定。
-        const isFinal = turn?.status === 'closed' && data?.finalNode !== undefined
-          && tail?.closing?.finalNode.seq === data.finalNode.seq
-          && Array.isArray(data.blocks) && data.blocks.some(b => b.kind === 'text' && b.text.trim());
+        const isFinal = closed && data?.finalNode !== undefined
+          && tail?.closing?.finalNode.seq === data.finalNode.seq && hasText;
+        // 运行中、只有文字没有工具调用的步骤，可能就是最终回答：先折叠进过程。
+        const maybeFinal = enabled && !closed && hasText && !blocks.some(b => b.kind === 'tool-call');
         const state = useVoice(sessionId, turn?.turn, isFinal && turn?.turn !== undefined);
         const [showRaw, setShowRaw] = React.useState(false);
-        const patched = React.useMemo(() => {
-          if (!isFinal || !state || state.status === 'none') return node;
-          return { ...node, data: { ...data, blocks: rewrite(data.blocks, state) } };
-        }, [node, data, isFinal, state]);
-        // 人设版生成成功后，在回答下方给一个切换按钮；原文仍交给官方组件渲染（Markdown 照常）。
-        if (!isFinal || state?.status !== 'ok') return h(Original, { ...props, node: patched });
-        return h(React.Fragment, null,
-          h(Original, { ...props, node: showRaw ? node : patched }),
-          h('div', { className: 'av-toggle' },
-            h('button', { type: 'button', onClick: () => setShowRaw(v => !v) }, showRaw ? '查看人设版' : '查看原文')));
+
+        const view = React.useMemo(() => {
+          if (maybeFinal) return { node: { ...node, data: { ...data, blocks: foldOriginal(blocks) } }, row: null };
+          if (!isFinal) return { node, row: null };
+          const status = state?.status ?? (enabled ? 'pending' : 'none');
+          if (status === 'pending') return { node: { ...node, data: { ...data, blocks: foldOriginal(blocks) } }, row: 'pending' };
+          if (status === 'ok') {
+            const voiced = [...foldOriginal(blocks), { kind: 'text', text: state.voice }];
+            return { node: { ...node, data: { ...data, blocks: voiced } }, row: 'toggle' };
+          }
+          if (status === 'error') return { node: { ...node, data: { ...data, blocks: [...blocks, { kind: 'text', text: '\n> 人设版生成失败：' + state.error }] } }, row: null };
+          return { node, row: null };
+        }, [node, data, blocks, maybeFinal, isFinal, enabled, state]);
+
+        if (view.row === 'pending') {
+          return h(React.Fragment, null, h(Original, { ...props, node: view.node }),
+            h('div', { className: 'av-process' }, h('span', { className: 'av-shimmer' }, '🌸 正在组织语言…')));
+        }
+        if (view.row === 'toggle') {
+          return h(React.Fragment, null,
+            h(Original, { ...props, node: showRaw ? node : view.node }),
+            h('div', { className: 'av-toggle' },
+              h('button', { type: 'button', onClick: () => setShowRaw(v => !v) }, showRaw ? '查看人设版' : '查看原文')));
+        }
+        return h(Original, { ...props, node: view.node });
       };
     }
 
@@ -95,6 +128,9 @@ window.__ModuleLoader__.load({
 .av-actions .av-primary{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-bg-base)}
 .av-actions button:disabled{opacity:.5;cursor:default}
 .av-error{color:var(--dsw-alias-state-error-primary)}.av-ok{color:var(--dsw-alias-state-success-primary)}
+.av-process{margin:2px 0 6px;font-size:13px;color:var(--dsw-alias-label-tertiary)}
+.av-shimmer{background:linear-gradient(90deg,currentColor 0%,currentColor 40%,var(--dsw-alias-label-primary) 50%,currentColor 60%,currentColor 100%);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:av-shimmer 1.6s linear infinite}
+@keyframes av-shimmer{from{background-position:100% 0}to{background-position:-100% 0}}
 .av-toggle{margin:4px 0 2px}
 .av-toggle button{font:inherit;font-size:12px;color:var(--dsw-alias-label-tertiary);background:transparent;border:0;border-radius:6px;padding:2px 6px;cursor:pointer}
 .av-toggle button:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary)}
@@ -137,6 +173,7 @@ window.__ModuleLoader__.load({
           setData(d => ({ ...d, settings: result.settings }));
           setDraft(result.settings);
           setStatus({ kind: 'saved' });
+          refreshEnabled();
         } catch (reason) {
           setStatus({ kind: 'error', message: reason.message });
         }
@@ -179,9 +216,14 @@ window.__ModuleLoader__.load({
           h('textarea', { value: draft.rules, onChange: e => set('rules', e.target.value) }),
           h('div', { className: 'av-actions' }, h('button', { type: 'button', onClick: () => set('rules', data.defaultRules) }, '恢复默认规则'))),
 
+        h('div', { className: 'av-field' },
+          h('label', null, '每轮提醒'),
+          h('input', { type: 'text', value: draft.reminder, placeholder: '留空则不附加', onChange: e => set('reminder', e.target.value) }),
+          h('div', { className: 'av-hint' }, '附在本轮最后一条消息里、不写进历史的一句话，防止聊久了人设走样，不影响缓存。'),
+          h('div', { className: 'av-actions' }, h('button', { type: 'button', onClick: () => set('reminder', data.defaultReminder) }, '恢复默认提醒'))),
+
         h('div', { className: 'av-row' },
-          number('fullTurns', '带原文的轮数', '最近几轮附带执行助手的原文'),
-          number('maxTurns', '最多记忆轮数', '更早的对话不再发送'),
+          number('maxTurns', '最多记忆轮数', '超出后一次删掉最早的一半，方便命中缓存'),
           number('maxTokens', '输出上限 (tokens)')),
 
         h('div', { className: 'av-actions' },
@@ -201,6 +243,10 @@ window.__ModuleLoader__.load({
     return {
       inject: ['slots'],
       apply(ctx) {
+        refreshEnabled();
+        const onFocus = () => refreshEnabled();
+        window.addEventListener('focus', onFocus);
+        ctx.effect(() => () => window.removeEventListener('focus', onFocus));
         const style = document.createElement('style');
         style.textContent = css;
         document.head.appendChild(style);

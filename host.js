@@ -3,7 +3,7 @@
 import { promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { buildRequest, DEFAULT_RULES } from './model.js';
+import { buildRequest, DEFAULT_RULES, DEFAULT_REMINDER } from './model.js';
 
 export const inject = ['llm', 'connection'];
 
@@ -17,12 +17,12 @@ export const DEFAULT_SETTINGS = {
   personaFile: '',     // 填了就从文件读人设（优先），否则用 persona 文本
   persona: '',
   rules: DEFAULT_RULES,
+  reminder: DEFAULT_REMINDER,  // 每轮附在最后一条消息里的简短提醒，不进历史
   maxTokens: 2048,
-  fullTurns: 4,
   maxTurns: 40,
 };
 
-const INT_LIMITS = { maxTokens: [256, 32768], fullTurns: [0, 50], maxTurns: [1, 200] };
+const INT_LIMITS = { maxTokens: [256, 32768], maxTurns: [2, 200] };
 
 /** 校验并规整设置；不合法时抛错，提示给设置页。 */
 export function normalizeSettings(input) {
@@ -34,6 +34,7 @@ export function normalizeSettings(input) {
     personaFile: String(s.personaFile ?? '').trim(),
     persona: String(s.persona ?? ''),
     rules: String(s.rules ?? ''),
+    reminder: String(s.reminder ?? ''),
   };
   if (Boolean(out.provider) !== Boolean(out.model)) throw new Error('provider 和 model 要么都填，要么都留空');
   for (const [key, [min, max]] of Object.entries(INT_LIMITS)) {
@@ -114,8 +115,8 @@ export async function apply(ctx, config = {}) {
     const route = settings.provider ? { provider: settings.provider, model: settings.model } : agent.session.requestContext();
     const history = (await readTurns(sessionId)).filter(t => t.turn !== turn && t.voice);
     const request = buildRequest({
-      persona, rules: settings.rules || DEFAULT_RULES, history, current: { user, raw },
-      fullTurns: settings.fullTurns, maxTurns: settings.maxTurns,
+      persona, rules: settings.rules || DEFAULT_RULES, reminder: settings.reminder, history, current: { user, raw },
+      maxTurns: settings.maxTurns,
     });
 
     const reasoningEffort = await pickEffort(route.provider, route.model);
@@ -131,10 +132,13 @@ export async function apply(ctx, config = {}) {
 
     let voice = '';
     let finish;
+    let usage;
     for await (const chunk of call.stream({ ...call.config, system: request.system, messages: wire, purpose: 'persona-voice' })) {
       if (chunk.type === 'text-delta') voice += chunk.text;
+      if (chunk.type === 'usage') usage = chunk.usage;
       if (chunk.type === 'finish') finish = chunk.reason;
     }
+    debug(`usage ${key} in=${usage?.inputTokens ?? '?'} cacheRead=${usage?.cacheReadTokens ?? 0} cacheWrite=${usage?.cacheWriteTokens ?? 0} out=${usage?.outputTokens ?? '?'} finish=${finish?.kind ?? '?'}`);
     if (pending.get(key) !== generation) return;   // 同一轮被 steer 又触发，旧结果作废
     const ok = finish?.kind === 'stop' || finish?.kind === 'max-tokens';
     const record = ok && voice.trim()
@@ -189,6 +193,14 @@ export async function apply(ctx, config = {}) {
     },
   });
 
+  // 浏览器端用来判断是否启用（轻量，不列模型）。
+  ctx.connection.fetch.register({
+    path: '/api/local-persona-voice/status',
+    methods: ['GET'],
+    requestBody: 'buffered',
+    fetch: async () => Response.json({ enabled: (await readSettings()).enabled }, { headers }),
+  });
+
   // 设置页：GET 读设置和可选模型，POST 保存。
   ctx.connection.fetch.register({
     path: '/api/local-persona-voice/settings',
@@ -210,7 +222,7 @@ export async function apply(ctx, config = {}) {
             return null;
           }
         }))).filter(Boolean);
-        return Response.json({ settings: await readSettings(), providers, defaultRules: DEFAULT_RULES }, { headers });
+        return Response.json({ settings: await readSettings(), providers, defaultRules: DEFAULT_RULES, defaultReminder: DEFAULT_REMINDER }, { headers });
       } catch (error) {
         return Response.json({ error: error.message }, { status: 400, headers });
       }

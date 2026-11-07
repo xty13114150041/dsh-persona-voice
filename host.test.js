@@ -17,7 +17,7 @@ test('provider and model must be set together', () => {
 
 test('integer fields are range checked', () => {
   assert.throws(() => normalizeSettings({ maxTurns: 0 }), /maxTurns/);
-  assert.throws(() => normalizeSettings({ fullTurns: 1.5 }), /fullTurns/);
+  assert.throws(() => normalizeSettings({ maxTurns: 2.5 }), /maxTurns/);
   assert.equal(normalizeSettings({ maxTokens: '4096' }).maxTokens, 4096);
 });
 
