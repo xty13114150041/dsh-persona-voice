@@ -1,0 +1,30 @@
+{
+  "name": "@local/dsh-persona-voice",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Persona relay for DSH: a second, context-carrying model call rewrites each turn's final answer in your character's voice",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xty13114150041/dsh-persona-voice.git"
+  },
+  "homepage": "https://github.com/xty13114150041/dsh-persona-voice#readme",
+  "engines": { "dsh": "^0.2.1-rc.5" },
+  "scripts": {
+    "test": "node --test model.test.js host.test.js",
+    "check": "node --check host.js && node --check client.js && node --check model.js"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./host.js",
+    "./client": "./client.js"
+  },
+  "files": ["host.js", "model.js", "client.js", "cordis.patch.yml", "README.md", "README.en.md", "LICENSE"],
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-ui-chat", "@deepseek-ai/dsh-client-ui-settings"]
+    }
+  }
+}

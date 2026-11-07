@@ -1,0 +1,4 @@
+- insert:
+    - id: local-persona-voice
+      name: '@local/dsh-persona-voice'
+      config: {}
