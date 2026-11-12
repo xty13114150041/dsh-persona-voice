@@ -69,8 +69,12 @@ window.__ModuleLoader__.load({
 
     function wrap(Original) {
       return function PersonaAssistantNodeView(props) {
-        const { node, useTurnData, sessionId } = props;
+        const { node, useTurnData, sessionId, groupPart } = props;
         const data = node.data;
+        // 0.2.2-rc.1 起，同一条 assistant 节点会按 groupPart 拆成两行各渲染一次：
+        // 'reasoning' 只画思考块，'response' 只画正文。两边共用同一份改写后的 blocks
+        // （官方渲染器会各自只取自己那一类），附加界面只挂在正文那一行，避免重复。
+        const processPart = groupPart === 'reasoning';
         const enabled = useEnabled();
         const turn = node.location?.kind === 'turn' || node.location?.kind === 'step' ? node.location.turn : undefined;
         const tail = useTurnData('turn-tail');
@@ -82,7 +86,7 @@ window.__ModuleLoader__.load({
           && tail?.closing?.finalNode.seq === data.finalNode.seq && hasText;
         // 运行中、只有文字没有工具调用的步骤，可能就是最终回答：先折叠进过程。
         const maybeFinal = enabled && !closed && hasText && !blocks.some(b => b.kind === 'tool-call');
-        const state = useVoice(sessionId, turn?.turn, isFinal && turn?.turn !== undefined);
+        const state = useVoice(sessionId, turn?.turn, isFinal && turn?.turn !== undefined && !processPart);
         const [showRaw, setShowRaw] = React.useState(false);
 
         const view = React.useMemo(() => {
@@ -97,6 +101,9 @@ window.__ModuleLoader__.load({
           if (status === 'error') return { node: { ...node, data: { ...data, blocks: [...blocks, { kind: 'text', text: '\n> 人设版生成失败：' + state.error }] } }, row: null };
           return { node, row: null };
         }, [node, data, blocks, maybeFinal, isFinal, enabled, state]);
+
+        // 思考那一行：只负责把原文折叠进来，不挂任何附加界面。
+        if (processPart) return h(Original, { ...props, node: view.node });
 
         if (view.row === 'pending') {
           return h(React.Fragment, null, h(Original, { ...props, node: view.node }),

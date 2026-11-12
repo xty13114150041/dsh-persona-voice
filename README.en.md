@@ -54,7 +54,7 @@ Data lives in `~/.dsh/persona-voice/`: `settings.json`, one JSON file per sessio
 - Copy and quote actions still use the original text.
 - The working agent never sees the persona version.
 - The renderer wrapping relies on DSH internals and may break on DSH upgrades; if it does, the original answer is shown.
-- Tested on DSH Desktop 0.2.2-rc.1 (macOS).
+- Tested on DSH Desktop 0.2.2-rc.2 (macOS). Requires DSH 0.2.2-rc.2 or newer: from rc.2 an answer is rendered as two rows (reasoning and response), and the plugin attaches its button only once across them.
 
 ## License
 
