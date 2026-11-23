@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-persona-voice",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "private": true,
   "description": "Persona relay for DSH: a second, context-carrying model call rewrites each turn's final answer in your character's voice",
   "license": "MIT",
@@ -17,9 +17,10 @@
   "type": "module",
   "exports": {
     ".": "./host.js",
-    "./client": "./client.js"
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json"
   },
-  "files": ["host.js", "model.js", "cost.js", "client.js", "cordis.patch.yml", "README.md", "README.en.md", "LICENSE"],
+  "files": ["host.js", "model.js", "cost.js", "client.js", "cordis.patch.yml", "locale/*.json", "README.md", "README.en.md", "LICENSE"],
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },
     "client": {

@@ -34,22 +34,17 @@
 
 ## 安装
 
-目前只能从源码安装：
+**桌面版：** 打开 DSH 的「插件 → 添加插件」，粘贴 [GitHub Release 安装包](https://github.com/xty13114150041/dsh-persona-voice/releases/download/v0.6.0/dsh-persona-voice.tgz) 的地址，按提示确认。也可以先下载 `.tgz`，再选择本地安装包。
+
+**Web / CLI：**
 
 ```bash
-git clone https://github.com/xty13114150041/dsh-persona-voice.git
+dsh plugin --profile web add https://github.com/xty13114150041/dsh-persona-voice/releases/download/v0.6.0/dsh-persona-voice.tgz
 ```
 
-在 DSH profile 目录（桌面版为 `~/.dsh/profiles/desktop`）的 `package.json` 中：
+如果用的是自定义 profile，把 `web` 换成对应名称。安装包是可直接运行的 JavaScript，不需要构建或授权安装脚本。安装后按 DSH 提示刷新或重启；本插件默认关闭，在「设置 → 人设转述」设置角色并开启。已经通过本地链接安装的用户，请先从同一 profile 移除旧链接，再安装发行版；插件设置和历史保留。
 
-```jsonc
-{
-  "dsh": { "profile": { "bundles": [ /* …原有内容… */, "@local/dsh-persona-voice" ] } },
-  "dependencies": { /* …原有内容… */, "@local/dsh-persona-voice": "link:/你的路径/dsh-persona-voice" }
-}
-```
-
-然后在该目录运行 `pnpm install`，再重启 DSH。修改前建议先备份 `package.json` 和 `pnpm-lock.yaml`。
+卸载可用 DSH「插件」页，或运行 `dsh plugin --profile web remove @local/dsh-persona-voice`。卸载不会删除本地数据。
 
 ## 设置
 
@@ -72,7 +67,11 @@ git clone https://github.com/xty13114150041/dsh-persona-voice.git
 
 转述规则、每轮提醒和输出上限收在「高级设置」里。
 
-数据存放在 `~/.dsh/persona-voice/`：
+## 数据与隐私
+
+启用后，插件用 DSH 已配置的模型渠道做转述。所选模型会收到人设、本轮用户文字、执行 agent 的最终回复，以及你允许带入的历史转述文本。若配置了人设文件，DSH 宿主会读取指定文件，并把其中用于人设的内容随请求发给该模型。不要把密钥或不想发送给模型服务商的内容放进人设或对话。插件不需要另外提供 API 密钥。
+
+插件数据保存在 `$DSH_HOME/persona-voice/`（默认 `~/.dsh/persona-voice/`）；关闭插件不会删除历史：
 
 - `settings.json`：设置
 - `rates.json`：手动填写的模型单价
@@ -86,7 +85,7 @@ git clone https://github.com/xty13114150041/dsh-persona-voice.git
 - 复制、引用按钮拿到的仍是原文。
 - 执行 agent 看不到人设版。如果人设版里出现了原文没有的内容，执行 agent 是不知道的。默认规则禁止 B 新增行动，就是为了避免这种情况。
 - 浏览器端的做法是包装官方渲染器，依赖 DSH 内部结构。DSH 升级后可能失效；失效时会退回显示原文。
-- 已在 DSH Desktop 0.2.2-rc.3（macOS）上测试。要求 DSH 0.2.2-rc.2 及以上：rc.2 起同一条回答会按"思考/正文"拆成两行渲染，本插件按这个结构只挂一次按钮。
+- 声明支持 DSH `^0.2.2-rc.2`。旧版曾在 DSH Desktop 0.2.2-rc.3（macOS）上测试；0.6.0 已在隔离的 DSH Web 0.2.2-rc.5 配置中验证安装、设置接口、浏览器模块和卸载。Desktop 界面未复测。
 
 ## 开发
 

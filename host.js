@@ -44,7 +44,8 @@ async function writeJson(file, value) {
 
 export const inject = ['llm', 'connection'];
 
-const DATA_DIR = path.join(homedir(), '.dsh', 'persona-voice');
+const dshHome = process.env.DSH_HOME?.trim();
+const DATA_DIR = path.resolve(dshHome || path.join(homedir(), '.dsh'), 'persona-voice');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 
 export const DEFAULT_SETTINGS = {

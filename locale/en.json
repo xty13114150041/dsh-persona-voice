@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Persona relay",
+    "description": "A second model rewrites final replies in your persona’s voice without changing the working agent. The original remains available. Configure it in Settings → Persona relay. Off by default; each relay sends conversation text to the selected model and uses extra tokens."
+  }
+}

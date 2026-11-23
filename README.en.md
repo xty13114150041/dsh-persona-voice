@@ -22,12 +22,17 @@ The working agent focuses on the task. After each turn, a second, context-carryi
 
 ## Install
 
-Source install only for now. Clone the repo, then edit `package.json` in your DSH profile directory (desktop: `~/.dsh/profiles/desktop`):
+**Desktop:** Open **Plugins → Add plugin** and paste the [GitHub Release package](https://github.com/xty13114150041/dsh-persona-voice/releases/download/v0.6.0/dsh-persona-voice.tgz) URL, or download the `.tgz` and select it as a local package.
 
-- add `"@local/dsh-persona-voice"` to `dsh.profile.bundles`
-- add `"@local/dsh-persona-voice": "link:/path/to/dsh-persona-voice"` to `dependencies`
+**Web / CLI:**
 
-Then run `pnpm install` there and restart DSH. Back up `package.json` and `pnpm-lock.yaml` first.
+```bash
+dsh plugin --profile web add https://github.com/xty13114150041/dsh-persona-voice/releases/download/v0.6.0/dsh-persona-voice.tgz
+```
+
+Replace `web` with your profile name if needed. The package ships runnable JavaScript and needs no build or lifecycle-script approval. Refresh or restart as directed by DSH. Relay is off by default; set a persona and enable it under **Settings → Persona relay**. If the same profile already has a locally linked checkout, remove that link before installing the release. Settings and history are retained.
+
+Uninstall via the DSH Plugins page or `dsh plugin --profile web remove @local/dsh-persona-voice`. This leaves the local data intact.
 
 ## Settings
 
@@ -50,7 +55,11 @@ You can set:
 
 Relay rules, the per-turn reminder, and the output limit are under **Advanced settings**.
 
-Data lives in `~/.dsh/persona-voice/`: `settings.json`, `rates.json` (manual model rates), one JSON file per session, and `debug.log`.
+## Data and privacy
+
+When enabled, the plugin uses a model provider already configured in DSH. The selected model receives the persona, the current turn’s user text and final assistant answer, and the relay history allowed by your context setting. If you select a persona file, the DSH host reads it and sends the portion used as the persona. Keep secrets and anything you do not want to share with that provider out of the persona and conversation. The plugin does not ask for a separate API key.
+
+Data lives in `$DSH_HOME/persona-voice/` (default `~/.dsh/persona-voice/`): `settings.json`, `rates.json` (manual model rates), one JSON file per session, and `debug.log`. Disabling the plugin does not delete that data.
 
 ## Caveats
 
@@ -59,7 +68,7 @@ Data lives in `~/.dsh/persona-voice/`: `settings.json`, `rates.json` (manual mod
 - Copy and quote actions still use the original text.
 - The working agent never sees the persona version.
 - The renderer wrapping relies on DSH internals and may break on DSH upgrades; if it does, the original answer is shown.
-- Tested on DSH Desktop 0.2.2-rc.3 (macOS). Requires DSH 0.2.2-rc.2 or newer: from rc.2 an answer is rendered as two rows (reasoning and response), and the plugin attaches its button only once across them.
+- The bundle declares DSH `^0.2.2-rc.2`. An earlier plugin version was tested on DSH Desktop 0.2.2-rc.3 (macOS). For 0.6.0, installation, the settings API, delivery of the browser module, and uninstall were verified in an isolated DSH Web 0.2.2-rc.5 profile. The Desktop UI was not retested.
 
 ## License
 
