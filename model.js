@@ -1,7 +1,7 @@
 // 纯函数：给人设 agent（B）拼装多轮上下文。不依赖 DSH，便于单测。
 //
-// 缓存友好：system（人设 + 规则）固定在最前；历史只往后追加、每轮原文完整保留；
-// 超过 maxTurns 时成批删掉最早的一半，所以大多数轮次的前缀与上一轮完全相同。
+// 缓存友好：system（人设 + 规则）固定在最前；全部模式只往后追加，
+// 旧版固定上限模式成批裁剪最早的历史。近 5 轮采用严格的滑动窗口。
 // 简短提醒附在每条用户消息末尾（固定文本），这样已发送过的消息永远不变：
 // Anthropic 的缓存断点在上一轮最后一条消息上，若历史消息与上一轮不同就整段失效。
 
@@ -26,14 +26,18 @@ export function trimStart(length, maxTurns) {
  * @param {string} opts.persona   人设全文
  * @param {string} [opts.rules]   转述规则
  * @param {string} [opts.reminder] 本轮附加的简短提醒（空则不加）
- * @param {Array<{user:string, raw:string, voice:string}>} opts.history 之前各轮记录（旧→新）
- * @param {{user:string, raw:string}} opts.current 本轮
- * @param {number} [opts.maxTurns=40]  最多带多少轮历史（超出时成批删最早的一半）
+ * @param {Array<{turn?:number, user:string, raw:string, voice:string}>} opts.history 已成功转述的旧轮次（旧→新）
+ * @param {{turn?:number, user:string, raw:string}} opts.current 本轮；近 5 轮模式按轮次编号计算
+ * @param {'current' | 'recent5' | 'all' | 'legacy'} [opts.contextScope='legacy'] 转述上下文范围
+ * @param {number} [opts.maxTurns=40] 旧版最多带多少轮历史（超出时成批裁剪）
  * @param {number} [opts.maxRawChars=12000] 单轮 A 原文截断上限
  */
-export function buildRequest({ persona, rules = DEFAULT_RULES, reminder = '', history, current, maxTurns = 40, maxRawChars = 12000 }) {
+export function buildRequest({ persona, rules = DEFAULT_RULES, reminder = '', history, current, contextScope = 'legacy', maxTurns = 40, maxRawChars = 12000 }) {
   const system = `${persona.trim()}\n\n<relay_rules>\n${rules.trim()}\n</relay_rules>`;
-  const kept = history.slice(trimStart(history.length, maxTurns));
+  let kept = history;
+  if (contextScope === 'current') kept = [];
+  else if (contextScope === 'recent5') kept = history.filter(t => t.turn >= current.turn - 4 && t.turn < current.turn);
+  else if (contextScope === 'legacy') kept = history.slice(trimStart(history.length, maxTurns));
   const messages = [];
   const tag = reminder.trim() ? `\n<reminder>${reminder.trim()}</reminder>` : '';
   for (const turn of kept) {
@@ -45,7 +49,9 @@ export function buildRequest({ persona, rules = DEFAULT_RULES, reminder = '', hi
 }
 
 export function formatTurn(user, raw, maxRawChars = 12000) {
-  return `<user>\n${(user ?? '').trim()}\n</user>\n<executor_output>\n${clip((raw ?? '').trim(), maxRawChars)}\n</executor_output>`;
+  const input = (user ?? '').trim();
+  const userBlock = input ? `<user>\n${input}\n</user>` : '<turn_note>本轮没有新的用户消息，只转述本轮执行原文。</turn_note>';
+  return `${userBlock}\n<executor_output>\n${clip((raw ?? '').trim(), maxRawChars)}\n</executor_output>`;
 }
 
 function clip(text, max) {

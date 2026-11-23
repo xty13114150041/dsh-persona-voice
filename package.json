@@ -11,20 +11,20 @@
   "homepage": "https://github.com/xty13114150041/dsh-persona-voice#readme",
   "engines": { "dsh": "^0.2.2-rc.2" },
   "scripts": {
-    "test": "node --test model.test.js host.test.js",
-    "check": "node --check host.js && node --check client.js && node --check model.js"
+    "test": "node --test model.test.js host.test.js cost.test.js",
+    "check": "node --check host.js && node --check client.js && node --check model.js && node --check cost.js"
   },
   "type": "module",
   "exports": {
     ".": "./host.js",
     "./client": "./client.js"
   },
-  "files": ["host.js", "model.js", "client.js", "cordis.patch.yml", "README.md", "README.en.md", "LICENSE"],
+  "files": ["host.js", "model.js", "cost.js", "client.js", "cordis.patch.yml", "README.md", "README.en.md", "LICENSE"],
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },
     "client": {
       "platform": "web",
-      "inject": ["@deepseek-ai/dsh-client-ui-chat", "@deepseek-ai/dsh-client-ui-settings", "@deepseek-ai/dsh-api-session-controller", "@deepseek-ai/dsh-api-remotes"]
+      "inject": ["@deepseek-ai/dsh-client-ui-chat", "@deepseek-ai/dsh-client-ui-settings", "@deepseek-ai/dsh-client-locale", "@deepseek-ai/dsh-api-session-controller", "@deepseek-ai/dsh-api-remotes"]
     }
   }
 }

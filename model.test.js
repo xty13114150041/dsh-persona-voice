@@ -2,7 +2,33 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildRequest, formatTurn, trimStart } from './model.js';
 
-const mk = n => Array.from({ length: n }, (_, i) => ({ user: `u${i}`, raw: `RAW${i}`, voice: `v${i}` }));
+const mk = n => Array.from({ length: n }, (_, i) => ({ turn: i, user: `u${i}`, raw: `RAW${i}`, voice: `v${i}` }));
+
+test('current context sends only this turn while keeping the persona and rules', () => {
+  const current = { turn: 10, user: 'new question', raw: 'new answer' };
+  const { system, messages } = buildRequest({ persona: 'p', history: mk(10), current, contextScope: 'current' });
+  assert.match(system, /^p\n\n<relay_rules>/);
+  assert.deepEqual(messages, [{ role: 'user', content: formatTurn(current.user, current.raw) }]);
+});
+
+test('recent context is a five-turn window including the current turn without backfilling gaps', () => {
+  const current = { turn: 10, user: 'u10', raw: 'RAW10' };
+  const history = mk(10);
+  const options = { persona: 'p', current, contextScope: 'recent5' };
+  const voices = messages => messages.filter(m => m.role === 'assistant').map(m => m.content);
+  assert.deepEqual(voices(buildRequest({ ...options, history }).messages), ['v6', 'v7', 'v8', 'v9']);
+  assert.deepEqual(voices(buildRequest({ ...options, history: history.filter(t => t.turn !== 8) }).messages), ['v6', 'v7', 'v9']);
+  assert.equal(buildRequest({ ...options, history: [] }).messages.length, 1);
+});
+
+test('all context includes every saved preceding turn regardless of the old cap', () => {
+  const current = { turn: 42, user: 'u42', raw: 'RAW42' };
+  const { messages } = buildRequest({ persona: 'p', current, history: mk(42), contextScope: 'all', maxTurns: 2 });
+  assert.equal(messages.length, 85);
+  assert.equal(messages[1].content, 'v0');
+  assert.equal(messages.at(-2).content, 'v41');
+  assert.match(messages.at(-1).content, /RAW42/);
+});
 
 test('builds alternating multi-turn messages ending with current turn', () => {
   const { system, messages } = buildRequest({

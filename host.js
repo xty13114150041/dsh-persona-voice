@@ -4,6 +4,43 @@ import { promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { buildRequest, DEFAULT_RULES, DEFAULT_REMINDER } from './model.js';
+import { normalizeRate, summarizeCosts } from './cost.js';
+
+const readIfPresent = file => fs.readFile(file, 'utf8').catch(error => {
+  if (error.code === 'ENOENT') return '';
+  throw error;
+});
+
+export async function costResponse(request, dir) {
+  const file = path.join(dir, 'rates.json');
+  const saved = await readIfPresent(file);
+  const rates = saved ? JSON.parse(saved) : {};
+  if (!rates || typeof rates !== 'object' || Array.isArray(rates)) throw new Error('Invalid rates file.');
+  const valid = Object.fromEntries(Object.entries(rates).map(([key, value]) => {
+    try { return [key, normalizeRate(value)]; } catch { return [key, null]; }
+  }));
+  if (request.method === 'POST') {
+    const { provider, model, rate } = await request.json();
+    if (![provider, model].every(id => typeof id === 'string' && id.trim())) throw new Error('Choose a provider and model.');
+    const key = JSON.stringify([provider, model]);
+    if (rate === null) {
+      delete rates[key];
+      delete valid[key];
+    } else {
+      const next = normalizeRate({ ...rate, source: undefined });
+      const previous = valid[key];
+      if (!previous || Object.keys(next).some(field => next[field] !== previous[field])) rates[key] = valid[key] = next;
+    }
+  }
+  const summary = summarizeCosts(await readIfPresent(path.join(dir, 'debug.log')), valid);
+  if (request.method === 'POST') await writeJson(file, rates);
+  return summary;
+}
+
+async function writeJson(file, value) {
+  await fs.writeFile(file + '.tmp', JSON.stringify(value, null, 1));
+  await fs.rename(file + '.tmp', file);
+}
 
 export const inject = ['llm', 'connection'];
 
@@ -21,7 +58,8 @@ export const DEFAULT_SETTINGS = {
   rules: DEFAULT_RULES,
   reminder: DEFAULT_REMINDER,  // 附在每条用户消息末尾的固定提醒
   maxTokens: 2048,
-  maxTurns: 40,
+  contextScope: 'recent5',
+  maxTurns: 40,       // 只用于沿用旧版设置
 };
 
 const INT_LIMITS = { maxTokens: [256, 32768], maxTurns: [2, 200] };
@@ -29,7 +67,10 @@ const INT_LIMITS = { maxTokens: [256, 32768], maxTurns: [2, 200] };
 /** 校验并规整设置；不合法时抛错，提示给设置页。 */
 export function normalizeSettings(input) {
   const s = { ...DEFAULT_SETTINGS, ...input };
+  const contextScope = input?.contextScope ?? (input?.maxTurns !== undefined ? 'legacy' : DEFAULT_SETTINGS.contextScope);
+  if (!['current', 'recent5', 'all', 'legacy'].includes(contextScope)) throw new Error('Invalid relay context scope');
   const out = {
+    contextScope,
     enabled: Boolean(s.enabled),
     provider: String(s.provider ?? '').trim(),
     model: String(s.model ?? '').trim(),
@@ -76,8 +117,9 @@ export function extractPersona(text) {
 
 export async function apply(ctx, config = {}) {
   await fs.mkdir(DATA_DIR, { recursive: true });
-  const pending = new Map();   // `${sessionId}:${turn}` -> 生成代次
+  const pending = new Map();   // `${sessionId}:${turn}` -> 本次生成的标记
   const queues = new Map();    // sessionId -> 串行队列，保证同一会话按顺序写
+  const activeTurns = new WeakMap();
 
   // 首次运行：用 cordis 配置（如有）作为初始设置。
   async function readSettings() {
@@ -88,11 +130,6 @@ export async function apply(ctx, config = {}) {
       return normalizeSettings({ ...config });
     }
   }
-  async function writeJson(file, value) {
-    await fs.writeFile(file + '.tmp', JSON.stringify(value, null, 1));
-    await fs.rename(file + '.tmp', file);
-  }
-
   const fileOf = sessionId => path.join(DATA_DIR, sessionId.replace(/[^\w.-]/g, '_') + '.json');
   async function readTurns(sessionId) {
     try { return JSON.parse(await fs.readFile(fileOf(sessionId), 'utf8')); } catch { return []; }
@@ -135,20 +172,36 @@ export async function apply(ctx, config = {}) {
     return (message?.content ?? []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
   }
 
-  async function generate(agent, turn, key, generation, settings) {
-    const sessionId = agent.id;
-    const messages = agent.session.deriveMessages();
-    const user = textOf(messages.findLast(m => m.role === 'user' && m.source?.kind === 'user'));
-    const raw = textOf(messages.findLast(m => m.role === 'assistant'));
-    if (!raw) { pending.delete(key); return; }
+  // 真人消息事件没有 turn 字段；只在明确的 turn/start、turn/end 之间收集。
+  // 压缩会改变模型可见历史，但不会改变已经提交的本轮事件。
+  ctx.on('session/event', (session, event) => {
+    if (event.type === 'turn/start') {
+      if (session.header?.origin === 'subagent') return;
+      activeTurns.set(session, { turn: event.data.turn, user: '', raw: '' });
+      return;
+    }
+    const current = activeTurns.get(session);
+    if (!current) return;
+    if (event.type === 'turn/end' && event.data.turn === current.turn) {
+      activeTurns.delete(session);
+    } else if (event.type === 'user/message' && event.data.source.kind === 'user') {
+      const text = textOf(event.data);
+      if (text) current.user = current.user ? `${current.user}\n\n${text}` : text;
+    } else if (event.type === 'assistant/message' && event.data.turn === current.turn) {
+      current.raw = textOf(event.data.message);
+    }
+  });
 
+  async function generate(sessionId, current, sessionRoute, key, generation, settings) {
+    const { turn, user, raw } = current;
     const persona = (await loadPersona(settings)).trim();
-    if (!persona) { debug('skip: persona empty'); pending.delete(key); return; }
-    const route = settings.provider ? { provider: settings.provider, model: settings.model } : agent.session.requestContext();
-    const history = (await readTurns(sessionId)).filter(t => t.turn !== turn && t.voice);
+    if (!persona) { debug('skip: persona empty'); return; }
+    const route = settings.provider ? { provider: settings.provider, model: settings.model } : sessionRoute;
+    const history = settings.contextScope === 'current' ? [] : (await readTurns(sessionId))
+      .filter(t => t.turn < turn && t.voice).sort((a, b) => a.turn - b.turn);
     const request = buildRequest({
-      persona, rules: settings.rules || DEFAULT_RULES, reminder: settings.reminder, history, current: { user, raw },
-      maxTurns: settings.maxTurns,
+      persona, rules: settings.rules || DEFAULT_RULES, reminder: settings.reminder, history,
+      current, contextScope: settings.contextScope, maxTurns: settings.maxTurns,
     });
 
     const reasoningEffort = await pickEffort(route.provider, route.model, settings.effort);
@@ -165,12 +218,16 @@ export async function apply(ctx, config = {}) {
     let voice = '';
     let finish;
     let usage;
-    for await (const chunk of call.stream({ ...call.config, system: request.system, messages: wire, purpose: 'persona-voice' })) {
-      if (chunk.type === 'text-delta') voice += chunk.text;
-      if (chunk.type === 'usage') usage = chunk.usage;
-      if (chunk.type === 'finish') finish = chunk.reason;
+    try {
+      for await (const chunk of call.stream({ ...call.config, system: request.system, messages: wire, purpose: 'persona-voice' })) {
+        if (chunk.type === 'text-delta') voice += chunk.text;
+        if (chunk.type === 'usage') usage = chunk.usage;
+        if (chunk.type === 'finish') finish = chunk.reason;
+      }
+    } finally {
+      // 失败或结果被后续生成替换，也可能已经产生费用。每次用量独立附上实际调用的渠道与模型。
+      debug(`usage ${key} in=${usage?.inputTokens ?? '?'} cacheRead=${usage?.cacheReadTokens ?? 0} cacheWrite=${usage?.cacheWriteTokens ?? 0} out=${usage?.outputTokens ?? '?'} finish=${finish?.kind ?? '?'} route=${JSON.stringify([call.config.provider, call.config.model])}`);
     }
-    debug(`usage ${key} in=${usage?.inputTokens ?? '?'} cacheRead=${usage?.cacheReadTokens ?? 0} cacheWrite=${usage?.cacheWriteTokens ?? 0} out=${usage?.outputTokens ?? '?'} finish=${finish?.kind ?? '?'}`);
     if (pending.get(key) !== generation) return;   // 同一轮被 steer 又触发，旧结果作废
     const ok = finish?.kind === 'stop' || finish?.kind === 'max-tokens';
     const record = ok && voice.trim()
@@ -178,33 +235,41 @@ export async function apply(ctx, config = {}) {
       : { turn, user, raw, error: `生成失败：${finish?.kind ?? 'unknown'}`, at: new Date().toISOString() };
     const turns = (await readTurns(sessionId)).filter(t => t.turn !== turn);
     turns.push(record);
-    await writeJson(fileOf(sessionId), turns);
-    pending.delete(key);
+    if (pending.get(key) === generation) await writeJson(fileOf(sessionId), turns);
   }
 
   ctx.on('agent/turn-stopping', ({ agent, turn }) => {
     if (agent.session?.header?.origin === 'subagent') return;
-    const key = `${agent.id}:${turn}`;
-    // 不能 await：循环会等这个监听器结束才写 turn/end。先同步占位 pending，界面才能显示"组织语言中"。
-    const generation = (pending.get(key) ?? 0) + 1;
+    const tracked = activeTurns.get(agent.session);
+    if (tracked?.turn !== turn) return;
+    const sessionId = agent.id;
+    const key = `${sessionId}:${turn}`;
+    if (!tracked.raw) { pending.delete(key); return; }
+    // 进队列前固定本轮输入；不能等待转述，否则会阻塞主 agent 写 turn/end。
+    const current = { ...tracked };
+    const { provider, model } = agent.session.requestContext();
+    const generation = Symbol();
     pending.set(key, generation);
-    const prev = queues.get(agent.id) ?? Promise.resolve();
+    const prev = queues.get(sessionId) ?? Promise.resolve();
     const next = prev.then(async () => {
+      if (pending.get(key) !== generation) return;
       const settings = await readSettings();
-      if (!settings.enabled) { pending.delete(key); return; }
-      await generate(agent, turn, key, generation, settings);
+      if (!settings.enabled || pending.get(key) !== generation) return;
+      await generate(sessionId, current, { provider, model }, key, generation, settings);
     }).catch(async error => {
       debug(`failed ${key}: ${error?.stack ?? error}`);
       if (pending.get(key) !== generation) return;
       // 失败也落盘，界面能显示失败原因而不是悄悄没反应。
       try {
-        const turns = (await readTurns(agent.id)).filter(t => t.turn !== turn);
+        const turns = (await readTurns(sessionId)).filter(t => t.turn !== turn);
         turns.push({ turn, error: String(error?.message ?? error), at: new Date().toISOString() });
-        await writeJson(fileOf(agent.id), turns);
+        if (pending.get(key) === generation) await writeJson(fileOf(sessionId), turns);
       } catch {}
-      pending.delete(key);
+    }).finally(() => {
+      if (pending.get(key) === generation) pending.delete(key);
+      if (queues.get(sessionId) === next) queues.delete(sessionId);
     });
-    queues.set(agent.id, next);
+    queues.set(sessionId, next);
   });
 
   const headers = { 'cache-control': 'no-store' };
@@ -231,6 +296,24 @@ export async function apply(ctx, config = {}) {
     methods: ['GET'],
     requestBody: 'buffered',
     fetch: async () => Response.json({ enabled: (await readSettings()).enabled }, { headers }),
+  });
+
+  // 费用与转述配置分开保存；多个设置窗口写单价时逐个合并。
+  let rateWrites = Promise.resolve();
+  ctx.connection.fetch.register({
+    path: '/api/local-persona-voice/costs',
+    methods: ['GET', 'POST'],
+    requestBody: 'buffered',
+    fetch: async request => {
+      const result = rateWrites.then(() => costResponse(request, DATA_DIR));
+      if (request.method === 'POST') rateWrites = result.catch(() => {});
+      try {
+        return Response.json(await result, { headers });
+      } catch (error) {
+        debug(`costs unreadable: ${error.message}`);
+        return Response.json({ error: 'Could not load or save relay costs.' }, { status: 400, headers });
+      }
+    },
   });
 
   // 设置页：GET 读设置和可选模型，POST 保存。
